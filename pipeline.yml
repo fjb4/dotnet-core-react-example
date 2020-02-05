@@ -1,0 +1,82 @@
+---
+resources:
+  - name: dotnet-core-react-project
+    type: git
+    icon: github-circle
+    source:
+      uri: https://github.com/fjb4/dotnet-core-react-example
+      branch: concourse
+  - name: dotnet-core-react-image
+    type: registry-image
+    source:
+      repository: ((docker_hub_username))/dotnet-core-react-example
+      username: ((docker_hub_username))
+      password: ((docker_hub_password))
+
+jobs:
+  - name: build
+    public: true
+    serial: true
+    plan:
+      - get: dotnet-core-react-project
+      - in_parallel:
+          - task: build-dotnet
+            config:
+              inputs:
+                - name: dotnet-core-react-project
+              outputs:
+                - name: dotnet-artifacts
+              platform: linux
+              image_resource:
+                type: registry-image
+                source:
+                  repository: mcr.microsoft.com/dotnet/core/sdk
+                  tag: 3.1
+              run:
+                path: /bin/bash
+                args:
+                  - -c
+                  - |
+                    dotnet restore -r linux-musl-x64
+                    dotnet publish -c Release -o ../dotnet-artifacts -r linux-musl-x64 --self-contained false --no-restore
+                dir: dotnet-core-react-project
+          - task: build-node
+            config:
+              inputs:
+                - name: dotnet-core-react-project
+              outputs:
+                - name: node-artifacts
+              platform: linux
+              image_resource:
+                type: registry-image
+                source:
+                  repository: node
+                  tag: 13
+              run:
+                path: /bin/bash
+                args:
+                  - -c
+                  - |
+                    npm install
+                    npm run build
+                    mkdir -p ../../node-artifacts/ClientApp/build
+                    cp -r ./build/* ../../node-artifacts/ClientApp/build
+                dir: dotnet-core-react-project/ClientApp
+      - task: build-image
+        privileged: true
+        config:
+          platform: linux
+          image_resource:
+            type: registry-image
+            source:
+              repository: vito/oci-build-task
+          inputs:
+            - name: dotnet-core-react-project
+              path: .
+            - name: dotnet-artifacts
+            - name: node-artifacts
+          outputs:
+            - name: image
+          run: { path: build }
+      - put: dotnet-core-react-image
+        params: { image: image/image.tar }

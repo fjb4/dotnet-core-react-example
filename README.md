@@ -1,6 +1,6 @@
 # .NET Core React Application
 
-Note that this has been tested with .NET Core 2.2 and Node.js 13.
+Note that this has been tested with .NET Core 3.1 and Node.js 13.7.
 
 In this example, the .csproj file has been modified from the default React project template behavior, so that the "PublishRunWebpack" target is conditionally executed:
 
