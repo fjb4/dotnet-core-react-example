@@ -1,42 +1,82 @@
-# .NET Core React Application
+## Sample Concourse Pipeline for Building .NET Core React Applications
 
-Note that this has been tested with .NET Core 3.1 and Node.js 13.7.
+This repository contains an example of a Concourse pipeline that builds .NET Core React applications (i.e. those created in Visual Studio using the React project template or by running `dotnet new react` from the command line).
 
-In this example, the .csproj file has been modified from the default React project template behavior, so that the "PublishRunWebpack" target is conditionally executed:
+Under normal circumstances, publishing a .NET Core React application (`dotnet publish`) builds everything in one step. This includes both .NET and React artifacts. This is convenient but, in order to do this, both the .NET SDK and Node.js must be installed.
 
-```xml
-<Target Name="PublishRunWebpack" AfterTargets="ComputeFilesToPublish" Condition=" '$(Configuration)' != 'Release' ">
-```
+In a Concourse CI pipeline, building this in one step means you'd need to create a custom Docker image that combines both the .NET SDK and Node.js. However, if you were able to build the artifacts separately, the .NET build step could use an official .NET SDK image and the React build step could use an official Node.js image. That is what is demonstrated in this repository.
 
-Conditionally executing the "PublishRunWebpack" target allows you to control when the React artifacts are built. In this case, both the .NET and React artifacts are generated for debug builds, but only the .NET artifacts are generated for release builds. This could be useful for situations where you want to generate the React artifacts separately.
-
-Note that this uses a condition based on whether or not you are creating a release build. This is just an example, and it may make more sense to base the condition on something else.
-
-## Debug Builds
-
-Debug builds are unchanged from their normal behavior in a React project template. In the example below, because debug is specified, both .NET and React artifacts will be generated:
+In order to build the .NET and React artifacts separately, the first step is to modify the project's .csproj (`react-example.csproj`) file and prevent it from building the React artifacts when publishing in a Release configuration. You do this by adding a condition to the `PublishRunWebpack` target:
 
 ```
-dotnet publish -o publish -c Debug
+Condition=" '$(Configuration)' != 'Release' "
+```
+Once that has been done, our Concourse pipeline (`pipeline.yml`) can use two separate tasks to build the project. The first task is `build-dotnet` which is solely responsible for generating the .NET artifacts. To do so, it uses an official .NET Core SDK image from Microsoft:
 
-# deploy the contents of the publish folder to Cloud Foundry
-cf push react-example --random-route -p publish
+```yaml
+- task: build-dotnet
+  config:
+      ...
+      source:
+          repository: mcr.microsoft.com/dotnet/core/sdk
+          tag: 3.1
+      run:
+      path: /bin/bash
+      args:
+          - -c
+          - |
+          dotnet restore -r linux-musl-x64
+          dotnet publish -c Release -o ../dotnet-artifacts -r linux-musl-x64 --self-contained false --no-restore
 ```
 
-## Release Builds
+The second task is `build-node` and it builds the React/JavaScript artifacts for the project. It uses an official Node.js image:
 
-When making a release build, only the .NET artifacts will be generated. Because of this, running `dotnet publish` for release builds does not require Node.js or NPM to be installed. However, the React artifacts will need to be built separately.
+```yaml
+- task: build-node
+  config:
+      ...
+      source:
+          repository: node
+          tag: 13
+      run:
+      path: /bin/bash
+      args:
+          - -c
+          - |
+          npm install
+          npm run build
+      ...
+```
+
+After these tasks execute, the pipeline combines the output of these tasks to produce the final container image, and then the image is pushed to Docker Hub.
+
+
+### Deploying and Triggering the Pipeline
+
+Note that this pipeline creates a container image and pushes it to Docker Hub. To do this, you must specify credentials for a Docker Hub repository in a file named `creds.yml`:
+
+```yaml
+docker_hub_username: <username>
+docker_hub_password: <password>
+```
+
+Once you've created `creds.yml` you can set the pipeline:
 
 ```
-dotnet publish -o publish -c Release
+fly -t <target> set-pipeline -c pipeline.yml -p dotnet-core-react -l creds.yml -n
+```
 
-# above step didn't generate React artifacts, so we'll need to do it ourselves
-(cd ClientApp && npm install)
-(cd ClientApp && npm run build)
+And then trigger the pipeline to run:
 
-# now copy the React artifacts to the publish folder
-mkdir -p ./publish/ClientApp/build/ && cp -R ./ClientApp/build/* ./publish/ClientApp/build/
+```
+fly -t <target> trigger-job --job dotnet-core-react/build -w 
+```
 
-# deploy the contents of the publish folder to Cloud Foundry
-cf push react-example --random-route -p publish
+
+### Running the Application
+
+To run the application, execute the following command and then visit `http://localhost:8000` in your web browser:
+
+```
+docker container run -it --rm -p 8000:80 <docker-hub-username>/dotnet-core-react-example
 ```
