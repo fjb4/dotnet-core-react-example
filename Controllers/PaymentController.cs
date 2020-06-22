@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
@@ -24,14 +23,21 @@ namespace react_example.Controllers
         public async Task<IEnumerable<Payment>> Get()
         {
             var paymentServiceUrl = Environment.GetEnvironmentVariable("PAYMENT_SERVICE_URL");
-            List<Payment> paymentList = null;
+            _logger.LogInformation($"Payment Service URL: {paymentServiceUrl ?? string.Empty}");
+            
+            List<Payment> paymentList;
 
-            if (!string.IsNullOrEmpty(paymentServiceUrl))
+            try
             {
                 using var httpClient = new HttpClient();
                 using var response = await httpClient.GetAsync(paymentServiceUrl);
                 var apiResponse = await response.Content.ReadAsStringAsync();
                 paymentList = JsonConvert.DeserializeObject<List<Payment>>(apiResponse);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($@"Error retrieving payments from '{paymentServiceUrl ?? string.Empty}'", ex);
+                throw;
             }
 
             return paymentList ?? new List<Payment>();
